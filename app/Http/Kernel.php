@@ -43,6 +43,10 @@ class Kernel extends HttpKernel
             'throttle:api',
             \Illuminate\Routing\Middleware\SubstituteBindings::class,
         ],
+        // HubSpot Middleware Added
+        'hubspot' => [
+            \Wave\Http\Middleware\HubSpotValidation::class,
+        ],
     ];
 
     /**

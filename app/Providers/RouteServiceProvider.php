@@ -35,6 +35,10 @@ class RouteServiceProvider extends ServiceProvider
 
             Route::middleware('web')
                 ->group(base_path('routes/web.php'));
+
+            // Prefix HubSpot Added 
+            Route::middleware('hubspot')->prefix('hubspot')
+                ->group(base_path('wave/routes/hubspot.php'));
         });
     }
 
@@ -47,6 +51,10 @@ class RouteServiceProvider extends ServiceProvider
     {
         RateLimiter::for('api', function (Request $request) {
             return Limit::perMinute(60)->by($request->user()?->id ?: $request->ip());
+        });
+        // rate limit added for hubspot api call
+        RateLimiter::for('hubspot', function (Request $request) {
+            return Limit::perMinute(18000)->by($request->user()?->id ?: $request->ip());
         });
     }
 }
