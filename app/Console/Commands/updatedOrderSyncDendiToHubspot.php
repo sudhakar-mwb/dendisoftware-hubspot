@@ -14,7 +14,7 @@ use HubSpot\Client\Crm\Contacts\Model\PublicAssociationsForObject;
 use HubSpot\Client\Crm\Contacts\Model\PublicObjectId;
 use HubSpot\Client\Crm\Contacts\Model\SimplePublicObjectInputForCreate;
 
-class createdOrderSyncDendiToHubspot extends Command
+class updatedOrderSyncDendiToHubspot extends Command
 {
     use DendiApis;
     /**
@@ -22,7 +22,7 @@ class createdOrderSyncDendiToHubspot extends Command
      *
      * @var string
      */
-    protected $signature = 'get:createdOrderSyncDendiToHubspot';
+    protected $signature = 'get:updatedOrderSyncDendiToHubspot';
 
     /**
      * The console command description.
@@ -38,7 +38,7 @@ class createdOrderSyncDendiToHubspot extends Command
     {
         $client = Factory::createWithAccessToken(env('HUBSPOT_ACCESS_TOKEN'));
         $date   = Carbon::now();
-        $dbData = DB::table('dendisoftware_options')->select('option_value')->where('option_name', 'created_orderIds')->first();
+        $dbData = DB::table('dendisoftware_options')->select('option_value')->where('option_name', 'updated_orderIds')->first();
         $count  = 0;
 
         if (empty($dbData)) {
@@ -63,38 +63,40 @@ class createdOrderSyncDendiToHubspot extends Command
                 \Log::info("5 contacts synced");
                 break;
             }
-            \Log::info('Created Order Id. '. $contactId);
+            \Log::info('Updated Order Id. '. $contactId);
+
             // fetch order from Dendi
             $dendiOrderResponse = $this->_getDendiData('api/v1/orders/'.$contactId);
 
-            $sample = [];
-            $Test_Processed = [] ;
-            foreach ($dendiOrderResponse['response']['test_panels'] as $key1 => $value1) {
-                $Test_Processed[] = !empty( $value1['test_panel_type']['name']) ?  $value1['test_panel_type']['name'] : "" ;
-                foreach ($value1['samples'] as $key2 => $value2) {
-                    $sample[] = $value2;
-                }
-            }
-
-            $first_sample_date = $sample[0]["collection_date"];
-            $last_sample_date  = $sample[count($sample) - 1]["collection_date"];
-
-            $firstSample = $this->getMonthAndYear($first_sample_date);
-            $lastSample  = $this->getMonthAndYear($last_sample_date);
-
-            // Check if the year is the same
-            if ($firstSample === $lastSample) {
-                $result = $firstSample;
-            } else {
-                // Extract the month parts and combine
-                $firstMonth = (new DateTime($first_sample_date))->format('F');
-                $lastMonth  = (new DateTime($last_sample_date))->format('F');
-                $year       = (new DateTime($first_sample_date))->format('Y');
-                // Combine the month and year into the desired format
-                $result = "$firstMonth - $lastMonth $year";
-            }
-
             if ( !empty($dendiOrderResponse) && !empty($dendiOrderResponse['response']) && !empty($dendiOrderResponse['response']['uuid']) ) {
+
+                $sample         = [];
+                $Test_Processed = [] ;
+                foreach ($dendiOrderResponse['response']['test_panels'] as $key1 => $value1) {
+                    $Test_Processed[] = !empty( $value1['test_panel_type']['name']) ?  $value1['test_panel_type']['name'] : "" ;
+                    foreach ($value1['samples'] as $key2 => $value2) {
+                        $sample[] = $value2;
+                    }
+                }
+
+                $first_sample_date = $sample[0]["collection_date"];
+                $last_sample_date  = $sample[count($sample) - 1]["collection_date"];
+
+                $firstSample       = $this->getMonthAndYear($first_sample_date);
+                $lastSample        = $this->getMonthAndYear($last_sample_date);
+
+                // Check if the year is the same
+                if ($firstSample === $lastSample) {
+                    $result = $firstSample;
+                } else {
+                    // Extract the month parts and combine
+                    $firstMonth = (new DateTime($first_sample_date))->format('F');
+                    $lastMonth  = (new DateTime($last_sample_date))->format('F');
+                    $year       = (new DateTime($first_sample_date))->format('Y');
+                    // Combine the month and year into the desired format
+                    $result = "$firstMonth - $lastMonth $year";
+                }
+
                 if (!empty($dendiOrderResponse['response']['provider'])) {
                     $company = !empty($dendiOrderResponse['response']['provider']['user']['first_name'] || $dendiOrderResponse['response']['provider']['user']['last_name']) ? $dendiOrderResponse['response']['provider']['user']['first_name']. ' ' .$dendiOrderResponse['response']['provider']['user']['last_name']: "";
                 }
@@ -116,11 +118,13 @@ class createdOrderSyncDendiToHubspot extends Command
                     'dendi_order_id' => !empty($dendiOrderResponse['response']['code']) ? $dendiOrderResponse['response']['code'] : '',
                 ];
 
-                \Log::info('Patient contact hs property data. ');
+                \Log::info('Dendi Order Patient data mapped for HS contact. ');
                 \Log::info($mapedData);
 
-                $response = $this->searchsContact( $dendiOrderResponse['response'] );
-                if ($response['status'] == false && $response['message'] == "contact alredy exist.") {
+                if (!empty($contactId) && ($dendiOrderResponse['status_code'] == "200") && !empty($dendiOrderResponse['response'])) {
+                    $response = $this->searchsContact( $dendiOrderResponse['response'] );
+
+                    if ($response['status'] == false && $response['message'] == "contact alredy exist.") {
                         // Need to contact update
                         $simplePublicObjectInputForCreate = new SimplePublicObjectInputForCreate([
                             'associations' => null,
@@ -138,7 +142,8 @@ class createdOrderSyncDendiToHubspot extends Command
                         } catch (ApiException $e) {
                             echo "Exception when calling basic_api->create: ", $e->getMessage();
                         }
-                }elseif($response['status'] == true && $response['message'] == "contact not exist."){
+                    }
+                    elseif($response['status'] == true && $response['message'] == "contact not exist."){
                         // Need to contact create
                         $simplePublicObjectInputForCreate = new SimplePublicObjectInputForCreate([
                             'associations' => null,
@@ -157,9 +162,10 @@ class createdOrderSyncDendiToHubspot extends Command
                             echo "Exception when calling basic_api->create: ", $e->getMessage();
                         }
                     }
+                }
             } else {
-                \Log::info("HubSpot contact data not fetched using hsContactID.");
-                \Log::info($contactId);
+                \Log::info("Dendi order data fetched using orderID.");
+                \Log::info($dendiOrderResponse['response']);
             }
 
             \Log::info("HubSpot to dendi data map now unset id.");
@@ -168,25 +174,17 @@ class createdOrderSyncDendiToHubspot extends Command
             unset($contactIds[$key]);
         }
         DB::table('dendisoftware_options')->updateOrInsert(
-            ['option_name' => 'created_orderIds'],
+            ['option_name' => 'updated_orderIds'],
             [
                 'option_value' => json_encode(array_values(array_unique($contactIds))),
                 'updated_at' => $date->toDateTimeString()
             ]
         );
-    
     }
 
-    public function getMonthAndYear($dateString) {
-        $date  = new DateTime($dateString);
-        $month = $date->format('F'); // Full month name (e.g., January)
-        $year  = $date->format('Y');  // Full year (e.g., 2024)
-        return "$month $year";
-    }
-
-    public function searchsContact ( $data ){
-
+    public function searchsContact ( $data ) {
         $response = ["status" => true, "message" => "contact not exist."];
+
         if (!empty($data['code'])) {
             $hsContactRecord = $this->hubspotSearchContact('dendi_order_id', $data['code'], ['firstname', 'lastname', 'company', 'npi__', 'email', 'state','account_uuid']);
             $hsContactRecord = json_decode($hsContactRecord[0]);
@@ -197,4 +195,12 @@ class createdOrderSyncDendiToHubspot extends Command
         }
         return $response;
     }
+
+    public function getMonthAndYear($dateString) {
+        $date  = new DateTime($dateString);
+        $month = $date->format('F'); // Full month name (e.g., January)
+        $year  = $date->format('Y');  // Full year (e.g., 2024)
+        return "$month $year";
+    }
+
 }

@@ -16,7 +16,8 @@ class Kernel extends ConsoleKernel
     protected function schedule(Schedule $schedule)
     {
         // $schedule->command('get:syncHSContactToDendi')->everyFiveMinutes();
-        $schedule->command('get:createdOrderSyncDendiToHubspot')->everyFiveMinutes();
+        $schedule->command('get:createdOrderSyncDendiToHubspot')->everyTwoMinutes();
+        $schedule->command('get:updatedOrderSyncDendiToHubspot')->everyFiveMinutes();
     }
 
     /**

@@ -195,4 +195,33 @@ class HubspotController extends Controller
     );
     return ['success' => true];
   }
+  
+  // dendi order update webhook received
+  public function dendiOrderUpdated (Request $request) {
+    
+    $date = Carbon::now();
+    $dbData = DB::table('dendisoftware_options')->select('option_value')->where('option_name', 'updated_orderIds')->first();
+    if (empty($dbData)) {
+      $contactIds = array();
+    } else {
+      $contactIds = json_decode($dbData->option_value);
+    }
+    $data = $request->getContent();
+    $data = json_decode($data);
+
+    if (!empty($data)) {
+      $contactIds[]  = $data->order_code;
+      \Log::info("Received updated order from dendi! ". $data->order_code);
+    }
+
+    DB::table('dendisoftware_options')->updateOrInsert(
+      ['option_name' => 'updated_orderIds'],
+      [
+        'option_value' => json_encode(array_values(array_unique($contactIds))),
+        'updated_at' => $date->toDateTimeString()
+      ]
+    );
+    return ['success' => true];
+  }
+
 }
