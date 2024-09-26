@@ -90,7 +90,7 @@ trait DendiApis
 
         $response = curl_exec($curl);
         curl_close($curl);
-        $status_code = curl_getinfcompanyIdo($curl, CURLINFO_HTTP_CODE);
+        $status_code = curl_getinfo($curl, CURLINFO_HTTP_CODE);
         $curl_errors = curl_error($curl);
 
         return ['status_code' => $status_code, 'response' => json_decode($response, true), 'errors' => $curl_errors];

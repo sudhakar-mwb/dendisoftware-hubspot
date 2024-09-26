@@ -34,103 +34,170 @@ class HubspotController extends Controller
   }
 
   public function contactActivities(Request $request)
-  {
+{
+    $npiId = (string) $request['npi__'];
+    $providerId = (string) $request['provider_id'];
+    $hsObjectId = $request['hs_object_id'];
 
+    // Check if npiId and hs_object_id are provided
+    if (!empty($npiId) && $hsObjectId) {
+        $getDendiProviderResponse = $this->_getDendiData('api/v1/providers/?npi=' . $npiId);
 
-    $npiId = $request['npi__'];
-    $npiId = (string) $npiId;
- 
-    if (!empty($npiId) && $request['hs_object_id']) {
-      // check same npi__ id exist or not
-      $getDendiProviderResponse = $this->_getDendiData('api/v1/providers/?npi='.$npiId);
+        // Check if NPI ID already exists in Dendi
+        if (!empty($getDendiProviderResponse['response']['count']) && $getDendiProviderResponse['response']['count'] > 0) {
+            \Log::info("NPI ID $npiId already exists. hs_object_id: $hsObjectId");
+            \Log::info($getDendiProviderResponse);
+            \Log::info("NPI ID already exists.");
+            // return response()->json(['response' => [], 'status' => false, 'message' => "NPI ID already exists."]);
+        } else {
+            // Fetch HubSpot contact record using hs_object_id
+            $hsContactRecord = $this->hubspotSearchContact('hs_object_id', $hsObjectId, [
+                'firstname', 'lastname', 'company', 'npi__', 'email', 'state', 'account_uuid'
+            ]);
+            $hsContactRecord = json_decode($hsContactRecord[0]);
 
-      if ( !empty( $getDendiProviderResponse['response']['count']) && ($getDendiProviderResponse['response']['count'] > 0 ) ) {
-        \Log::info('Npi id '. $npiId .' alredy exist. hs_object_id : '. $request['hs_object_id']);
-        \Log::info($getDendiProviderResponse);
-        return response(json_encode(array('response' => [], 'status' => false, 'message' => "Npi id alredy exist.")));
-      }else{
+            if ($hsContactRecord->total > 0) {
+                $hubspotContactInfo = $hsContactRecord->results[0];
+                $hubspot = \HubSpot\Factory::createWithAccessToken(env('HUBSPOT_ACCESS_TOKEN'));
 
-        // fetch hs contact record using emailId
-      $hsContactRecord = $this->hubspotSearchContact('hs_object_id', $request['hs_object_id'], 
-      ['firstname', 'lastname', 'company', 'npi__', 'email', 'state','account_uuid']);
-      $hsContactRecord = json_decode($hsContactRecord[0]);
+                if (!empty($hubspotContactInfo->properties->firstname) || !empty($hubspotContactInfo->properties->lastname)) {
+                    // Create account in Dendi
+                    $postData = [
+                        'name'  => $hubspotContactInfo->properties->firstname . ' ' . $hubspotContactInfo->properties->lastname,
+                        'email' => $hubspotContactInfo->properties->email,
+                        'state' => $hubspotContactInfo->properties->state ?? "",
+                    ];
+                    $createDendiAccResponse = $this->_postDendiData('api/v1/accounts', $postData);
 
-      if ($hsContactRecord->total > 0) {
-        $hsRecordId         = $hsContactRecord->results[0]->id;
-        $hubspotContactInfo = $hsContactRecord->results[0];
-        $hubspot = \HubSpot\Factory::createWithAccessToken(env('HUBSPOT_ACCESS_TOKEN'));
-        if (!empty($hubspotContactInfo) && !empty($hubspotContactInfo->properties->firstname || $hubspotContactInfo->properties->lastname)) {
-            // create account in dendi
-            // name: String: Unique account name.
-            $postData = [
-                'name'  => $hubspotContactInfo->properties->firstname.' '.$hubspotContactInfo->properties->lastname,
-                'email' => $hubspotContactInfo->properties->email,
-                'state' => !empty( $hubspotContactInfo->properties->state) ?  $hubspotContactInfo->properties->state :  "",
-            ];
-            $createDendiAccResponse = $this->_postDendiData('api/v1/accounts', $postData);
+                    // Check if account is created successfully in Dendi
+                    if (!empty($createDendiAccResponse['response']['uuid'])) {
+                        \Log::info('Account created in Dendi.');
 
-            if (!empty($createDendiAccResponse['response']) && !empty($createDendiAccResponse['response']['uuid'])) {
+                        // Create provider in Dendi
+                        $providersPostData = [
+                            "account_uuids" => [$createDendiAccResponse['response']['uuid']],
+                            "user" => [
+                                "first_name" => $hubspotContactInfo->properties->company,
+                                "last_name"  => ' - ',
+                                "email"      => $hubspotContactInfo->properties->email,
+                            ],
+                            "npi" => $hubspotContactInfo->properties->npi__,
+                            "state" => $hubspotContactInfo->properties->state ?? "",
+                        ];
+                        $createDendiProviderResponse = $this->_postDendiData('api/v1/providers', $providersPostData);
 
-                \Log::info('Account created in dendi.');
-                // Dendi Provider Creation
-    
-                $providersPostData = [
-                    "account_uuids" => [$createDendiAccResponse['response']['uuid']], 
-                    "user" => [
-                        "first_name" => $hubspotContactInfo->properties->company,
-                        "last_name"  => ' - ',
-                        "email"      => $hubspotContactInfo->properties->email,
-                    ], 
-                    "npi"=> $hubspotContactInfo->properties->npi__,
-                    "state" => !empty( $hubspotContactInfo->properties->state) ?  $hubspotContactInfo->properties->state :  "",
-                ];
+                        // Check if provider is created successfully in Dendi
+                        if (!empty($createDendiProviderResponse['response']['uuid'])) {
+                            \Log::info('Provider created in Dendi.');
+                        } else {
+                            \Log::error('Error during provider creation in Dendi.', $createDendiProviderResponse);
+                        }
 
-                $createDendiProviderResponse = $this->_postDendiData('api/v1/providers', $providersPostData);
-                if (!empty($createDendiProviderResponse['response']) && !empty($createDendiProviderResponse['response']['uuid'])) {
-                    \Log::info('Provider created in dendi.');
-                }else{
-                  \Log::info('ERROR during provider creation on dendi. ');
-                  \Log::info($createDendiProviderResponse);
-                }
-                
+                        // Update HubSpot contact properties with Dendi account and provider UUIDs
+                        try {
+                            $newProperties = new SimplePublicObjectInput();
+                            $newProperties->setProperties([
+                                'account_uuid'  => $createDendiAccResponse['response']['uuid'] ?? "",
+                                'provider_uuid' => $createDendiProviderResponse['response']['uuid'] ?? "",
+                            ]);
 
-                try {
-                    $newProperties = new SimplePublicObjectInput();
-                    $newProperties->setProperties([
-                        'account_uuid'  =>  !empty($createDendiAccResponse['response']['uuid']) ? $createDendiAccResponse['response']['uuid'] : "",
-                        'provider_uuid' =>  !empty($createDendiProviderResponse['response']['uuid']) ? $createDendiProviderResponse['response']['uuid'] : "",
-                    ]);
-                    
-                    // vincere contact updated, update vincere id in hubspot 
-                    $accountUUIDUpdataRes = $hubspot->crm()->contacts()->basicApi()->updateWithHttpInfo($hubspotContactInfo->id, $newProperties);
-                    $accountUUIDUpdataRes = json_decode($accountUUIDUpdataRes[0]);
-                    if ($accountUUIDUpdataRes->id && !empty($accountUUIDUpdataRes->properties)) {
-                        \Log::info('Account & Provider created in dendi and update account_uuid &  provider_uuid in hubspot contact property');
-                        \Log::info($accountUUIDUpdataRes->id);
+                            $accountUUIDUpdateRes = $hubspot->crm()->contacts()->basicApi()->updateWithHttpInfo($hubspotContactInfo->id, $newProperties);
+                            $accountUUIDUpdateRes = json_decode($accountUUIDUpdateRes[0]);
+
+                            if ($accountUUIDUpdateRes->id) {
+                                \Log::info('Account & Provider created in Dendi, and updated in HubSpot.', ['id' => $accountUUIDUpdateRes->id]);
+                            } else {
+                                \Log::error('Error updating HubSpot contact with Dendi UUIDs.', $accountUUIDUpdateRes);
+                            }
+                        } catch (ApiException $e) {
+                            \Log::error('Exception when updating HubSpot contact:', ['message' => $e->getMessage()]);
+                        }
                     } else {
-                        \Log::info('Error during dendi account_uuid property update, after dendi contact creation.');
-                        \Log::info($accountUUIDUpdataRes);
+                        \Log::error('Error during account creation in Dendi.', $createDendiAccResponse);
                     }
-                } catch (ApiException $e) {
-                    echo "Exception when calling default_api->update: ", $e->getMessage();
+                } else {
+                    \Log::error('HubSpot contact information not received.', $hubspotContactInfo);
                 }
-            }else{
-              \Log::info('ERROR during account creation on dendi. ');
-              \Log::info($createDendiAccResponse);
+            } else {
+                \Log::error('HubSpot contact data not fetched using hs_object_id.', ['hs_object_id' => $hsObjectId]);
+            }
+        }
+    } elseif (!empty($providerId) && $hsObjectId) {
+        // Fetch provider details from Dendi using provider ID
+        $getDendiProviderResponse = $this->_getDendiData('api/v1/providers/?uuid=' . $providerId);
+
+        if (!empty($getDendiProviderResponse['response']['count']) && $getDendiProviderResponse['response']['count'] > 0) {
+            // Fetch HubSpot contact record using hs_object_id
+            $hsContactRecord = $this->hubspotSearchContact('hs_object_id', $hsObjectId, [
+                'firstname', 'lastname', 'company', 'npi__', 'email', 'state', 'account_uuid'
+            ]);
+            $hsContactRecord = json_decode($hsContactRecord[0]);
+
+            if ($hsContactRecord->total > 0) {
+                $hubspotContactInfo = $hsContactRecord->results[0];
+                $hubspot = \HubSpot\Factory::createWithAccessToken(env('HUBSPOT_ACCESS_TOKEN'));
+
+                if (!empty($hubspotContactInfo->properties->firstname) || !empty($hubspotContactInfo->properties->lastname)) {
+                    // Create account in Dendi
+                    $postData = [
+                        'name'  => $hubspotContactInfo->properties->firstname . ' ' . $hubspotContactInfo->properties->lastname,
+                        'email' => $hubspotContactInfo->properties->email,
+                        'state' => $hubspotContactInfo->properties->state ?? "",
+                    ];
+
+                    $createDendiAccResponse = $this->_postDendiData('api/v1/accounts', $postData);
+
+                    // Check if account is created successfully in Dendi
+                    if (!empty($createDendiAccResponse['response']['uuid'])) {
+                        \Log::info('Account created in Dendi.');
+
+                        // Associate provider with Dendi account
+                        $providersPostData = [
+                            "account_uuids" => [$createDendiAccResponse['response']['uuid']],
+                            "npi" => $providerId,
+                        ];
+                        $createDendiProviderResponse = $this->_putDendiData('api/v1/providers/' . $providerId, $providersPostData);
+
+                        // Check if provider is successfully associated with the account in Dendi
+                        if (!empty($createDendiProviderResponse['response']['uuid'])) {
+                            \Log::info('Provider associated with Dendi.');
+                        } else {
+                            \Log::error('Error during provider association with Dendi.', $createDendiProviderResponse);
+                        }
+
+                        // Update HubSpot contact properties with Dendi account and provider UUIDs
+                        try {
+                            $newProperties = new SimplePublicObjectInput();
+                            $newProperties->setProperties([
+                                'account_uuid'  => $createDendiAccResponse['response']['uuid'] ?? "",
+                                'provider_uuid' => $providerId ?? "",
+                            ]);
+
+                            $accountUUIDUpdateRes = $hubspot->crm()->contacts()->basicApi()->updateWithHttpInfo($hubspotContactInfo->id, $newProperties);
+                            $accountUUIDUpdateRes = json_decode($accountUUIDUpdateRes[0]);
+
+                            if ($accountUUIDUpdateRes->id) {
+                                \Log::info('Account & Provider created in Dendi, and updated in HubSpot.', ['id' => $accountUUIDUpdateRes->id]);
+                            } else {
+                                \Log::error('Error updating HubSpot contact with Dendi UUIDs.', $accountUUIDUpdateRes);
+                            }
+                        } catch (ApiException $e) {
+                            \Log::error('Exception when updating HubSpot contact:', ['message' => $e->getMessage()]);
+                        }
+                    } else {
+                        \Log::error('Error during account creation in Dendi.', $createDendiAccResponse);
+                    }
+                } else {
+                    \Log::error('HubSpot contact information not received.', $hubspotContactInfo);
+                }
+            } else {
+                \Log::error('HubSpot contact data not fetched using hs_object_id.', ['hs_object_id' => $hsObjectId]);
             }
         } else {
-            \Log::info('ERROR hubspot contact information not received' . $hubspotContactInfo);
-            \Log::info($hubspotContactInfo);
+            \Log::error("Provider data not found for Provider ID: $providerId.");
         }
-    } else {
-        \Log::info("HubSpot contact data not fetched using hsContactID.");
-        \Log::info($contactId);
     }
-      }
-    }else{
-      return response(json_encode(array('response' => [], 'status' => false, 'message' => "Npi id not received.")));
-    }
-  }
+}
 
   public function webhookReceived(Request $request)
   {
