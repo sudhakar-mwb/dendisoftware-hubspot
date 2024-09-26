@@ -47,7 +47,8 @@ class HubspotController extends Controller
         if (!empty($getDendiProviderResponse['response']['count']) && $getDendiProviderResponse['response']['count'] > 0) {
             \Log::info("NPI ID $npiId already exists. hs_object_id: $hsObjectId");
             \Log::info($getDendiProviderResponse);
-            return response()->json(['response' => [], 'status' => false, 'message' => "NPI ID already exists."]);
+            \Log::info("NPI ID already exists.");
+            // return response()->json(['response' => [], 'status' => false, 'message' => "NPI ID already exists."]);
         } else {
             // Fetch HubSpot contact record using hs_object_id
             $hsContactRecord = $this->hubspotSearchContact('hs_object_id', $hsObjectId, [
