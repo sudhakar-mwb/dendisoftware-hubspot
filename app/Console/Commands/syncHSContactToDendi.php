@@ -62,13 +62,13 @@ class syncHSContactToDendi extends Command
 
             // fetch hs contact record using emailId
             $hsContactRecord = $this->hubspotSearchContact('hs_object_id', $contactId, 
-            ['firstname', 'lastname', 'company', 'npi__', 'email', 'state','account_uuid','provider_id']);
+            ['firstname', 'lastname', 'company', 'npi__', 'email', 'state','account_uuid','alternate_id']);
             $hsContactRecord = json_decode($hsContactRecord[0]);
 
 
             if ($hsContactRecord->total > 0) {
                 $npiId       = (string)$hsContactRecord->results[0]->properties->npi__;
-                $providerId  = (string)$hsContactRecord->results[0]->properties->provider_id;
+                $alternateId  = (string)$hsContactRecord->results[0]->properties->alternate_id;
                 $hsObjectId  = $hsContactRecord->results[0]->properties->hs_object_id;
 
 
@@ -155,9 +155,9 @@ class syncHSContactToDendi extends Command
                             \Log::error('HubSpot contact data not fetched using hs_object_id.', ['hs_object_id' => $hsObjectId]);
                         }
                     }
-                } elseif (!empty($providerId) && $hsObjectId) {
+                } elseif (!empty($alternateId) && $hsObjectId) {
                     // Fetch provider details from Dendi using provider ID
-                    $getDendiProviderResponse = $this->_getDendiData('api/v1/providers/?uuid=' . $providerId);
+                    $getDendiProviderResponse = $this->_getDendiData('api/v1/providers/?alternate_id=' . $alternateId);
 
                     if (!empty($getDendiProviderResponse['response']['count']) && $getDendiProviderResponse['response']['count'] > 0) {
                         // Fetch HubSpot contact record using hs_object_id
@@ -187,9 +187,9 @@ class syncHSContactToDendi extends Command
                                     // Associate provider with Dendi account
                                     $providersPostData = [
                                         "account_uuids" => [$createDendiAccResponse['response']['uuid']],
-                                        "npi" => $providerId,
+                                        "alternate_id"  => $alternateId,
                                     ];
-                                    $createDendiProviderResponse = $this->_putDendiData('api/v1/providers/' . $providerId, $providersPostData);
+                                    $createDendiProviderResponse = $this->_putDendiData('api/v1/providers/' . $getDendiProviderResponse['response']['results'][0]['uuid'], $providersPostData);
 
                                     // Check if provider is successfully associated with the account in Dendi
                                     if (!empty($createDendiProviderResponse['response']['uuid'])) {
@@ -203,7 +203,7 @@ class syncHSContactToDendi extends Command
                                         $newProperties = new SimplePublicObjectInput();
                                         $newProperties->setProperties([
                                             'account_uuid'  => $createDendiAccResponse['response']['uuid'] ?? "",
-                                            'provider_uuid' => $providerId ?? "",
+                                            'provider_uuid' => $getDendiProviderResponse['response']['results'][0]['uuid'] ?? "",
                                         ]);
 
                                         $accountUUIDUpdateRes = $hubspot->crm()->contacts()->basicApi()->updateWithHttpInfo($hubspotContactInfo->id, $newProperties);
@@ -227,7 +227,7 @@ class syncHSContactToDendi extends Command
                             \Log::error('HubSpot contact data not fetched using hs_object_id.', ['hs_object_id' => $hsObjectId]);
                         }
                     } else {
-                        \Log::error("Provider data not found for Provider ID: $providerId.");
+                        \Log::error("Provider data not found for Alternate ID: $alternateId.");
                     }
                 }
 
