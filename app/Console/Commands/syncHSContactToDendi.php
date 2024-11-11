@@ -10,6 +10,11 @@ use HubSpot\Client\Crm\Contacts\ApiException;
 use HubSpot\Client\Crm\Contacts\Model\SimplePublicObjectInput;
 use App\Traits\DendiApis;
 
+use HubSpot\Client\Crm\Contacts\Model\AssociationSpec;
+use HubSpot\Client\Crm\Contacts\Model\PublicAssociationsForObject;
+use HubSpot\Client\Crm\Contacts\Model\PublicObjectId;
+use HubSpot\Client\Crm\Contacts\Model\SimplePublicObjectInputForCreate;
+
 class syncHSContactToDendi extends Command
 {
     use DendiApis;
@@ -82,6 +87,7 @@ class syncHSContactToDendi extends Command
                         \Log::info($getDendiProviderResponse);
                         \Log::info("NPI ID already exists.");
                         // return response()->json(['response' => [], 'status' => false, 'message' => "NPI ID already exists."]);
+                        $this->updateContactProperty($contactId, "This NPI ID $npiId already exists. Please use a unique ten-digit NPI ID.");
                     } else {
                         // Fetch HubSpot contact record using hs_object_id
                         $hsContactRecord = $this->hubspotSearchContact('hs_object_id', $hsObjectId, [
@@ -124,6 +130,7 @@ class syncHSContactToDendi extends Command
                                         \Log::info('Provider created in Dendi.');
                                     } else {
                                         \Log::error('Error during provider creation in Dendi.', $createDendiProviderResponse);
+                                        $this->updateContactProperty($contactId, "Account successfully created on dendi and received error during provider creation on Dendi.");
                                     }
 
                                     // Update HubSpot contact properties with Dendi account and provider UUIDs
@@ -139,6 +146,7 @@ class syncHSContactToDendi extends Command
 
                                         if ($accountUUIDUpdateRes->id) {
                                             \Log::info('Account & Provider created in Dendi, and updated in HubSpot.', ['id' => $accountUUIDUpdateRes->id]);
+                                            $this->updateContactProperty($contactId, "Account and provider have been created successfully in Dendi plateform.");
                                         } else {
                                             \Log::error('Error updating HubSpot contact with Dendi UUIDs.', $accountUUIDUpdateRes);
                                         }
@@ -146,6 +154,7 @@ class syncHSContactToDendi extends Command
                                         \Log::error('Exception when updating HubSpot contact:', ['message' => $e->getMessage()]);
                                     }
                                 } else {
+                                    $this->updateContactProperty($contactId, "An error occurred during account creation in Dendi. Please ensure that all required rules for account creation are followed.");
                                     \Log::error('Error during account creation in Dendi.', $createDendiAccResponse);
                                 }
                             } else {
@@ -211,6 +220,7 @@ class syncHSContactToDendi extends Command
 
                                         if ($accountUUIDUpdateRes->id) {
                                             \Log::info('Account & Provider created in Dendi, and updated in HubSpot.', ['id' => $accountUUIDUpdateRes->id]);
+                                            $this->updateContactProperty($contactId, "The account has been created and associated with the provided provider Alternate ID: $alternateId ");
                                         } else {
                                             \Log::error('Error updating HubSpot contact with Dendi UUIDs.', $accountUUIDUpdateRes);
                                         }
@@ -218,6 +228,7 @@ class syncHSContactToDendi extends Command
                                         \Log::error('Exception when updating HubSpot contact:', ['message' => $e->getMessage()]);
                                     }
                                 } else {
+                                    $this->updateContactProperty($contactId, "An error occurred during account creation in Dendi. Please ensure that all required rules for account creation are followed.");
                                     \Log::error('Error during account creation in Dendi.', $createDendiAccResponse);
                                 }
                             } else {
@@ -227,6 +238,7 @@ class syncHSContactToDendi extends Command
                             \Log::error('HubSpot contact data not fetched using hs_object_id.', ['hs_object_id' => $hsObjectId]);
                         }
                     } else {
+                        $this->updateContactProperty($contactId, "Provider data was not found on the Dendi platform using this Alternate ID:  $alternateId. ");
                         \Log::error("Provider data not found for Alternate ID: $alternateId.");
                     }
                 }
@@ -249,5 +261,31 @@ class syncHSContactToDendi extends Command
                 'updated_at' => $date->toDateTimeString()
             ]
         );
+    }
+
+    public function updateContactProperty ($contactId, $message) {
+
+        $client = Factory::createWithAccessToken(env('HUBSPOT_ACCESS_TOKEN'));
+        $mapedData = [
+            'api_response_message_from_dendi' => $message ?? "",
+        ];
+
+        // update message on contact property
+        $simplePublicObjectInputForCreate = new SimplePublicObjectInputForCreate([
+            'associations' => null,
+            'properties'   => $mapedData,
+        ]);
+        try {
+            $updateResponse = $client->crm()->contacts()->basicApi()->update($contactId,$simplePublicObjectInputForCreate);
+            $updateResponse = json_decode($updateResponse);
+            if ($updateResponse->id && !empty($updateResponse->properties)) {
+                \Log::info('Contact property updated successfully.');
+            } else {
+                \Log::info('Error during contact property updation in hubspot. ');
+                \Log::info($updateResponse);
+            }
+        } catch (ApiException $e) {
+            echo "Exception when calling basic_api->create: ", $e->getMessage();
+        }
     }
 }
