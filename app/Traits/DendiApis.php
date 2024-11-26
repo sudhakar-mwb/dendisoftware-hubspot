@@ -124,7 +124,7 @@ trait DendiApis
         }
 
         // @var CollectionResponseWithTotalSimplePublicObject $contactsPage
-        \Log::info("hubspotSearchContact " . $searchRequest);
+        // \Log::info("hubspotSearchContact " . $searchRequest);
         $contacts = $hubspot->crm()->contacts()->searchApi()->doSearchWithHttpInfo($searchRequest);
         // if ( $contacts[1] == 429) {
         //     sleep(pow(2, 5));

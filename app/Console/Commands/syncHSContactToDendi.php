@@ -102,7 +102,7 @@ class syncHSContactToDendi extends Command
                             if (!empty($hubspotContactInfo->properties->firstname) || !empty($hubspotContactInfo->properties->lastname)) {
                                 // Create account in Dendi
                                 $postData = [
-                                    'name'  => $hubspotContactInfo->properties->firstname . ' ' . $hubspotContactInfo->properties->lastname,
+                                    'name'  => $hubspotContactInfo->properties->company,
                                     'email' => $hubspotContactInfo->properties->email,
                                     'state' => $hubspotContactInfo->properties->state ?? "",
                                 ];
@@ -116,8 +116,8 @@ class syncHSContactToDendi extends Command
                                     $providersPostData = [
                                         "account_uuids" => [$createDendiAccResponse['response']['uuid']],
                                         "user" => [
-                                            "first_name" => $hubspotContactInfo->properties->company,
-                                            "last_name"  => ' - ',
+                                            "first_name" => $hubspotContactInfo->properties->firstname,
+                                            "last_name"  => $hubspotContactInfo->properties->lastname,
                                             "email"      => $hubspotContactInfo->properties->email,
                                         ],
                                         "npi" => $hubspotContactInfo->properties->npi__,
@@ -182,7 +182,7 @@ class syncHSContactToDendi extends Command
                             if (!empty($hubspotContactInfo->properties->firstname) || !empty($hubspotContactInfo->properties->lastname)) {
                                 // Create account in Dendi
                                 $postData = [
-                                    'name'  => $hubspotContactInfo->properties->firstname . ' ' . $hubspotContactInfo->properties->lastname,
+                                    'name'  => $hubspotContactInfo->properties->company,
                                     'email' => $hubspotContactInfo->properties->email,
                                     'state' => $hubspotContactInfo->properties->state ?? "",
                                 ];

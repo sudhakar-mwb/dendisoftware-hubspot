@@ -14,6 +14,11 @@ use HubSpot\Client\Crm\Contacts\Model\PublicAssociationsForObject;
 use HubSpot\Client\Crm\Contacts\Model\PublicObjectId;
 use HubSpot\Client\Crm\Contacts\Model\SimplePublicObjectInputForCreate;
 
+use HubSpot\Client\Crm\Companies\ApiException as CompaniesApiException;
+use HubSpot\Client\Crm\Companies\Model\SimplePublicObjectInput;
+use HubSpot\Client\Crm\Associations\Model\PublicAssociation;
+use HubSpot\Client\Crm\Associations\V4\ApiException as AssociationsApiException;
+use HubSpot\Client\Crm\Associations\V4\Model\AssociationSpec as AssociationsAssociationSpec;
 class createdOrderSyncDendiToHubspot extends Command
 {
     use DendiApis;
@@ -67,6 +72,14 @@ class createdOrderSyncDendiToHubspot extends Command
             // fetch order from Dendi
             $dendiOrderResponse = $this->_getDendiData('api/v1/orders/'.$contactId);
 
+            if (!empty($dendiOrderResponse['response']['provider']['uuid'])) {
+                $dendiProviderResponse = $this->_getDendiData('api/v1/providers/'.$dendiOrderResponse['response']['provider']['uuid']);
+            }
+
+            if (!empty($dendiOrderResponse['response']['account']['uuid'])) {
+                $dendiAccountResponse = $this->_getDendiData('api/v1/accounts/'.$dendiOrderResponse['response']['account']['uuid']);
+            }
+
             $sample = [];
             $Test_Processed = [] ;
             foreach ($dendiOrderResponse['response']['test_panels'] as $key1 => $value1) {
@@ -91,19 +104,31 @@ class createdOrderSyncDendiToHubspot extends Command
                 $lastMonth  = (new DateTime($last_sample_date))->format('F');
                 $year       = (new DateTime($first_sample_date))->format('Y');
                 // Combine the month and year into the desired format
-                $result = "$firstMonth - $lastMonth $year";
+                // $result = "$firstMonth - $lastMonth $year";
             }
 
-            if ( !empty($dendiOrderResponse) && !empty($dendiOrderResponse['response']) && !empty($dendiOrderResponse['response']['uuid']) ) {
-                if (!empty($dendiOrderResponse['response']['provider'])) {
-                    $company = !empty($dendiOrderResponse['response']['provider']['user']['first_name'] || $dendiOrderResponse['response']['provider']['user']['last_name']) ? $dendiOrderResponse['response']['provider']['user']['first_name']. ' ' .$dendiOrderResponse['response']['provider']['user']['last_name']: "";
+
+
+            $matchedLabels = [];
+            $DBTestProcessed = DB::table('dendisoftware_options')->where(['option_name'=>'test_processed'])->first();
+            if ($DBTestProcessed->option_value) {
+                $DBTestProcessedValue = json_decode($DBTestProcessed->option_value, true);
+                foreach ($DBTestProcessedValue['test_processed'] as $item) {
+                    if (in_array($item['label'], $Test_Processed)) {
+                        $matchedLabels[] = $item['label'];
+                    }
                 }
+            }
+            $uniqueLabels = implode(', ', array_unique($matchedLabels));
+
+            if ( !empty($dendiOrderResponse) && !empty($dendiOrderResponse['response']) && !empty($dendiOrderResponse['response']['uuid']) ) {
+
                 $mapedData = [
-                    'firstname' => $dendiOrderResponse['response']['patient']['user']['first_name'],
-                    'lastname'  => $dendiOrderResponse['response']['patient']['user']['last_name'],
-                    'email'     => $dendiOrderResponse['response']['patient']['user']['email'] ?? "",
-                    'company'   => !empty($company) ? $company : '',
-                    'phone'     => $dendiOrderResponse['response']['patient']['phone_number'] ?? "",
+                    'firstname' => $dendiOrderResponse['response']['provider']['user']['first_name'] ?? "",
+                    'lastname'  => $dendiOrderResponse['response']['provider']['user']['last_name']  ?? "",
+                    'email'     => $dendiOrderResponse['response']['provider']['user']['email']      ?? "",
+                    'company'   => $dendiOrderResponse['response']['account']['name']                ?? "",
+                    'phone'     => $dendiOrderResponse['response']['patient']['phone_number']        ?? "",
                     // 'specialty' => '', // need to property data confirmation
                     // 'account_status'        => $dendiOrderResponse['response']['status'], // order status
                     'first_sample_received' => explode(' ', $first_sample_date)[0] ?? '',
@@ -112,16 +137,40 @@ class createdOrderSyncDendiToHubspot extends Command
                     'test_processed'         => !empty($Test_Processed) ? implode(', ', $Test_Processed): "",
                     'number_of_samples_sent' => count($sample), // number of total sample
                     'address'               => $dendiOrderResponse['response']['patient']['address1'] . ' '. $dendiOrderResponse['response']['patient']['address2'],
-                    'patient_uuid'=>  !empty($dendiOrderResponse['response']['patient']['uuid']) ? $dendiOrderResponse['response']['patient']['uuid'] : '',
-                    'dendi_order_id' => !empty($dendiOrderResponse['response']['code']) ? $dendiOrderResponse['response']['code'] : '',
+                    // 'patient_uuid'=>  !empty($dendiOrderResponse['response']['patient']['uuid']) ? $dendiOrderResponse['response']['patient']['uuid'] : '',
+                    // 'dendi_order_id' => !empty($dendiOrderResponse['response']['code']) ? $dendiOrderResponse['response']['code'] : '',
+                    "provider_uuid"  => $dendiOrderResponse['response']['provider']['uuid'],
+                    "npi__"          => $dendiOrderResponse['response']['provider']['npi'],   // for US Only
+                    // "provider_id"    => $dendiOrderResponse['response']['provider']['uuid'],  // for international
                 ];
 
-                \Log::info('Patient contact hs property data. ');
+                $companyMapData = [
+                    "name"         => $dendiOrderResponse['response']['account']['name'] ?? "",
+                    "account_uuid" => $dendiOrderResponse['response']['account']['uuid'] ?? "",
+                    "total_number_of_tests" =>  count($sample) ?? "",
+                    "test_processed"        =>  !empty($uniqueLabels) ? $uniqueLabels : "",
+                ];
+
+
+
+                // company associated
+
+                \Log::info('Provider as contact mapping data. ');
                 \Log::info($mapedData);
 
-                $response = $this->searchsContact( $dendiOrderResponse['response'] );
+                \Log::info('Account as company mapping data. ');
+                \Log::info($companyMapData);
+
+                // Provider As Contact (NPI Id Must be exactly 10 digits and unique)
+                // Account  As Company (Account name unique)
+                sleep(15);
+                $response        = $this->searchsContact( $dendiOrderResponse['response']['provider']['uuid'] );
+                $companyResponse = $this->hubspotSearchCompany('account_uuid', $dendiOrderResponse['response']['account']['uuid'], ['name']);
+                $companyResponse = json_decode($companyResponse);
+
                 if ($response['status'] == false && $response['message'] == "contact alredy exist.") {
                         // Need to contact update
+                        unset($mapedData['first_sample_received']);
                         $simplePublicObjectInputForCreate = new SimplePublicObjectInputForCreate([
                             'associations' => null,
                             'properties'   => $mapedData,
@@ -130,7 +179,65 @@ class createdOrderSyncDendiToHubspot extends Command
                             $updateResponse = $client->crm()->contacts()->basicApi()->update($response['contactId'],$simplePublicObjectInputForCreate);
                             $updateResponse = json_decode($updateResponse);
                             if ($updateResponse->id && !empty($updateResponse->properties)) {
-                                \Log::info('Patient contact updated successfully.');
+
+                                if ($companyResponse->total > 0) {
+                                    // if company exists then update the company property and associated with contact
+
+                                    $companyId    = $companyResponse->results[0]->id;
+                                    $companyInput = new SimplePublicObjectInput([
+                                        'properties' => $companyMapData
+                                    ]);
+                                    $newCompanyResponse = $client->crm()->companies()->basicApi()->update($companyId,$companyInput);
+                                    $newCompanyId       = json_decode($newCompanyResponse);
+
+                                    if (!empty($newCompanyId->id)) {
+                                        $associationSpec2 = new AssociationsAssociationSpec([
+                                            'association_category' => 'HUBSPOT_DEFINED', 
+                                            'association_type_id'  => 279,  
+                                        ]);
+                                    
+                                        $associationResponse = $client->crm()->associations()->v4()->basicApi()->create('contacts', $updateResponse->id, 'companies', $newCompanyId->id, [$associationSpec2]);
+                                        $associationResponse = json_decode($associationResponse);
+                                        $associationId       = $associationResponse->toObjectTypeId;
+                                        if (empty($associationId)) {
+                                            \Log::info("Error during hubspot contacts updation and companies associations ");
+                                            \Log::info($associationResponse);
+                                        }
+                                    }else{
+                                        \Log::info("Error during hubspot companies creation ");
+                                        \Log::info($newCompanyResponse);
+                                    }
+                                    
+
+                                }else{
+                                    // create the company property and associated with the contact
+
+                                    $companyInput = new SimplePublicObjectInput([
+                                        'properties' => $companyMapData
+                                    ]);
+                                    $newCompanyResponse = $client->crm()->companies()->basicApi()->create($companyInput);
+                                    $newCompanyId       = json_decode($newCompanyResponse);
+
+                                    if (!empty($newCompanyId->id)) {
+                                        $associationSpec2 = new AssociationsAssociationSpec([
+                                            'association_category' => 'HUBSPOT_DEFINED', 
+                                            'association_type_id'  => 279,  
+                                        ]);
+                                    
+                                        $associationResponse = $client->crm()->associations()->v4()->basicApi()->create('contacts', $updateResponse->id, 'companies', $newCompanyId->id, [$associationSpec2]);
+                                        $associationResponse = json_decode($associationResponse);
+                                        $associationId       = $associationResponse->toObjectTypeId;
+                                        if (empty($associationId)) {
+                                            \Log::info("Error during hubspot contacts updation and companies associations ");
+                                            \Log::info($associationResponse);
+                                        }
+                                    }else{
+                                        \Log::info("Error during hubspot companies creation ");
+                                        \Log::info($newCompanyResponse);
+                                    }
+
+                                }
+                                
                             } else {
                                 \Log::info('Error during patient contact updation in hubspot. ');
                                 \Log::info($updateResponse);
@@ -148,7 +255,64 @@ class createdOrderSyncDendiToHubspot extends Command
                             $apiResponse = $client->crm()->contacts()->basicApi()->create($simplePublicObjectInputForCreate);
                             $apiResponse = json_decode($apiResponse);
                             if ($apiResponse->id && !empty($apiResponse->properties)) {
-                                \Log::info('Patient contact created successfully.');
+
+                                if ($companyResponse->total > 0) {
+                                    // if company exists then update the company property and associated with contact
+
+                                    $companyId    = $companyResponse->results[0]->id;
+                                    $companyInput = new SimplePublicObjectInput([
+                                        'properties' => $companyMapData
+                                    ]);
+                                    $newCompanyResponse = $client->crm()->companies()->basicApi()->update($companyId,$companyInput);
+                                    $newCompanyId       = json_decode($newCompanyResponse);
+
+                                    if (!empty($newCompanyId->id)) {
+                                        $associationSpec2 = new AssociationsAssociationSpec([
+                                            'association_category' => 'HUBSPOT_DEFINED', 
+                                            'association_type_id'  => 279,  
+                                        ]);
+                                    
+                                        $associationResponse = $client->crm()->associations()->v4()->basicApi()->create('contacts', $apiResponse->id, 'companies', $newCompanyId->id, [$associationSpec2]);
+                                        $associationResponse = json_decode($associationResponse);
+                                        $associationId = $associationResponse->toObjectTypeId;
+                                        if (empty($associationId)) {
+                                            \Log::info("Error during hubspot contacts updation and companies associations ");
+                                            \Log::info($associationResponse);
+                                        }
+                                    }else{
+                                        \Log::info("Error during hubspot companies creation ");
+                                        \Log::info($newCompanyResponse);
+                                    }
+
+                                }else{
+                                    // create the company property and associated with the contact
+
+                                    $companyInput = new SimplePublicObjectInput([
+                                        'properties' => $companyMapData
+                                    ]);
+                                    $newCompanyResponse = $client->crm()->companies()->basicApi()->create($companyInput);
+                                    $newCompanyId       = json_decode($newCompanyResponse);
+
+                                    if (!empty($newCompanyId->id)) {
+                                        $associationSpec2 = new AssociationsAssociationSpec([
+                                            'association_category' => 'HUBSPOT_DEFINED', 
+                                            'association_type_id'  => 279,  
+                                        ]);
+                                    
+                                        $associationResponse = $client->crm()->associations()->v4()->basicApi()->create('contacts', $apiResponse->id, 'companies', $newCompanyId->id, [$associationSpec2]);
+                                        $associationResponse = json_decode($associationResponse);
+                                        $associationId       = $associationResponse->toObjectTypeId;
+                                        if (empty($associationId)) {
+                                            \Log::info("Error during hubspot contacts updation and companies associations ");
+                                            \Log::info($associationResponse);
+                                        }
+                                    }else{
+                                        \Log::info("Error during hubspot companies creation ");
+                                        \Log::info($newCompanyResponse);
+                                    }
+
+                                }
+                                
                             } else {
                                 \Log::info('Error during patient contact create in hubspot. ');
                                 \Log::info($apiResponse);
@@ -187,8 +351,8 @@ class createdOrderSyncDendiToHubspot extends Command
     public function searchsContact ( $data ){
 
         $response = ["status" => true, "message" => "contact not exist."];
-        if (!empty($data['code'])) {
-            $hsContactRecord = $this->hubspotSearchContact('dendi_order_id', $data['code'], ['firstname', 'lastname', 'company', 'npi__', 'email', 'state','account_uuid']);
+        if (!empty($data)) {
+            $hsContactRecord = $this->hubspotSearchContact('provider_uuid', $data, ['firstname', 'lastname', 'company', 'npi__', 'email', 'state','account_uuid']);
             $hsContactRecord = json_decode($hsContactRecord[0]);
 
             if ( !empty($hsContactRecord->total) && ( $hsContactRecord->total > 0 )) {
@@ -196,5 +360,40 @@ class createdOrderSyncDendiToHubspot extends Command
             }
         }
         return $response;
+    }
+
+    public function hubspotSearchCompany($searchBy, $searchValue, $properties = array())
+    {
+
+        $hubspot = \HubSpot\Factory::createWithAccessToken(env('HUBSPOT_ACCESS_TOKEN'));
+
+        if (empty($searchBy) && empty($searchValue)) {
+            return '';
+        }
+
+        $filter = new \HubSpot\Client\Crm\Companies\Model\Filter();
+        $filter
+            ->setOperator('EQ')
+            ->setPropertyName($searchBy)
+            ->setValue($searchValue);
+        $filterGroup = new \HubSpot\Client\Crm\Companies\Model\FilterGroup();
+        $filterGroup->setFilters([$filter]);
+
+        $searchRequest = new \HubSpot\Client\Crm\Companies\Model\PublicObjectSearchRequest();
+        $searchRequest->setFilterGroups([$filterGroup]);
+
+        if (count($properties) !== 0) {
+            // Get specific properties
+            $searchRequest->setProperties($properties);
+        }
+        \Log::info("hubspotSearch Companies " . $searchRequest);
+        $companies = $hubspot->crm()->Companies()->searchApi()->doSearch($searchRequest);
+
+        // Rate Limit
+        if ( $companies[1] == 429) {
+            sleep(pow(2, 5));
+            $companies = $hubspot->crm()->Companies()->searchApi()->doSearchWithHttpInfo($searchRequest);
+        }
+        return $companies;
     }
 }
