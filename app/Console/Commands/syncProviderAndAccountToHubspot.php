@@ -218,7 +218,7 @@ class syncProviderAndAccountToHubspot extends Command
                                                     'association_category' => 'HUBSPOT_DEFINED', 
                                                     'association_type_id'  => 279,  
                                                 ]);
-                                                $associationResponse = $client->crm()->associations()->v4()->basicApi()->create('contacts', $contactCreateResponse->id, 'companies', $newCompanyId->id, [$associationSpec2]);
+                                                $associationResponse = $client->crm()->associations()->v4()->basicApi()->create('contacts', $contactUpdateResponse->id, 'companies', $newCompanyId->id, [$associationSpec2]);
                                                 $associationResponse = json_decode($associationResponse);
                                                 $associationId       = $associationResponse->toObjectTypeId;
                                                 if (empty($associationId)) {
