@@ -72,7 +72,7 @@ class createdOrderSyncDendiToHubspot extends Command
             \Log::info('Created Order Id. '. $contactId);
             // fetch order from Dendi
             $dendiOrderResponse = $this->_getDendiData('api/v1/orders/'.$contactId);
-
+            if (empty($dendiOrderResponse['response']['error'])) {
             if (!empty($dendiOrderResponse['response']['provider']['uuid'])) {
                 $dendiProviderResponse = $this->_getDendiData('api/v1/providers/'.$dendiOrderResponse['response']['provider']['uuid']);
             }
@@ -353,6 +353,10 @@ class createdOrderSyncDendiToHubspot extends Command
             } else {
                 \Log::info("HubSpot contact data not fetched using hsContactID.");
                 \Log::info($contactId);
+            }
+            }else{
+                \Log::info("Dendi Order Data Not Fetch : ");
+                \Log::info($dendiOrderResponse['response']);
             }
 
             \Log::info("HubSpot to dendi data map now unset id.");

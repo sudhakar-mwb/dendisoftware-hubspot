@@ -15,6 +15,11 @@ use HubSpot\Client\Crm\Contacts\Model\PublicAssociationsForObject;
 use HubSpot\Client\Crm\Contacts\Model\PublicObjectId;
 use HubSpot\Client\Crm\Contacts\Model\SimplePublicObjectInputForCreate;
 
+use HubSpot\Client\Crm\Companies\ApiException as CompaniesApiException;
+use HubSpot\Client\Crm\Companies\Model\SimplePublicObjectInput;
+use HubSpot\Client\Crm\Associations\Model\PublicAssociation;
+use HubSpot\Client\Crm\Associations\V4\ApiException as AssociationsApiException;
+use HubSpot\Client\Crm\Associations\V4\Model\AssociationSpec as AssociationsAssociationSpec;
 class updatedOrderSyncDendiToHubspot extends Command
 {
     use DendiApis;
@@ -67,7 +72,7 @@ class updatedOrderSyncDendiToHubspot extends Command
             \Log::info('Created Order Id. '. $contactId);
             // fetch order from Dendi
             $dendiOrderResponse = $this->_getDendiData('api/v1/orders/'.$contactId);
-
+            if (empty($dendiOrderResponse['response']['error'])) {
             if (!empty($dendiOrderResponse['response']['provider']['uuid'])) {
                 $dendiProviderResponse = $this->_getDendiData('api/v1/providers/'.$dendiOrderResponse['response']['provider']['uuid']);
             }
@@ -348,6 +353,10 @@ class updatedOrderSyncDendiToHubspot extends Command
             } else {
                 \Log::info("HubSpot contact data not fetched using hsContactID.");
                 \Log::info($contactId);
+            }
+            }else{
+                \Log::info("Dendi Order Data Not Fetch : ");
+                \Log::info($dendiOrderResponse['response']);
             }
 
             \Log::info("HubSpot to dendi data map now unset id.");
