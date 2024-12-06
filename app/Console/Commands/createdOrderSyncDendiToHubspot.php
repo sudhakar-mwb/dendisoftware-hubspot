@@ -9,6 +9,7 @@ use DateTime;
 use App\Traits\DendiApis;
 use HubSpot\Factory;
 use HubSpot\Client\Crm\Contacts\ApiException;
+use HubSpot\Client\Crm\Contacts\Model\SimplePublicObjectInput as ContactInput;
 use HubSpot\Client\Crm\Contacts\Model\AssociationSpec;
 use HubSpot\Client\Crm\Contacts\Model\PublicAssociationsForObject;
 use HubSpot\Client\Crm\Contacts\Model\PublicObjectId;
@@ -143,11 +144,11 @@ class createdOrderSyncDendiToHubspot extends Command
                     "npi__"          => $dendiOrderResponse['response']['provider']['npi'],   // for US Only
                     // "provider_id"    => $dendiOrderResponse['response']['provider']['uuid'],  // for international
                 ];
-
+                $ordersResponse = $this->_getDendiData('api/v1/orders/?account_uuid='.$dendiOrderResponse['response']['account']['uuid']);
                 $companyMapData = [
                     "name"         => $dendiOrderResponse['response']['account']['name'] ?? "",
                     "account_uuid" => $dendiOrderResponse['response']['account']['uuid'] ?? "",
-                    "total_number_of_tests" =>  count($sample) ?? "",
+                    "total_number_of_tests" =>  $ordersResponse['response']['count']     ?? "",
                     "test_processed"        =>  !empty($uniqueLabels) ? $uniqueLabels : "",
                 ];
 
@@ -252,8 +253,36 @@ class createdOrderSyncDendiToHubspot extends Command
                             'properties'   => $mapedData,
                         ]);
                         try {
-                            $apiResponse = $client->crm()->contacts()->basicApi()->create($simplePublicObjectInputForCreate);
-                            $apiResponse = json_decode($apiResponse);
+                            // start
+                            try{
+                                $apiResponse = $client->crm()->contacts()->basicApi()->create($simplePublicObjectInputForCreate);
+                                $apiResponse = json_decode($apiResponse);
+                                }catch (ApiException $e) {
+                                    if ($e->getCode() === 409) {
+                                        // Conflict error occurred, extract the existing ID from the error message
+                                        $apiResponse = json_decode($e->getResponseBody(), true);
+
+                                        if (isset($apiResponse['message']) && preg_match('/Existing ID: (\d+)/', $apiResponse['message'], $matches)) {
+                                            $existingContactId = $matches[1]; // Extracted contact ID
+                                            \Log::info("Contact already exists. Existing ID: $existingContactId");
+                                            $contactId = $existingContactId;
+                                            // $contactsApi->update($existingContactId, $updateContactData);
+
+                                            // Need to contact update
+                                            unset($mapedData['first_sample_received']);
+                                            // Update the contact properties
+                                            $contactInput = new ContactInput([
+                                                'properties' => $mapedData,
+                                            ]);
+                                            $apiResponse = $client->crm()->contacts()->basicApi()->update($contactId, $contactInput);
+                                            $apiResponse = json_decode($apiResponse);
+                                        }
+                                    } else {
+                                        // Handle other exceptions
+                                        throw $e;
+                                    }
+                                }
+                                // end
                             if ($apiResponse->id && !empty($apiResponse->properties)) {
 
                                 if ($companyResponse->total > 0) {
